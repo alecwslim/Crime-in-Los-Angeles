@@ -1,0 +1,1115 @@
+---
+title: "Final Project - Understanding the Intersectionality of Crime in Los Angeles"
+author: "Shriya Krishna, Alec Slim, Alex Beltran, Joey Kaminsky, and Veronica Hernandez"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: sandstone
+    highlight: zenburn
+---
+
+## Introduction
+Crime is a complex and pervasive social issue that affects communities worldwide, with the prevalence of crime differing by location. Interestingly, studies as early as 2004 have found that larger populations seem to have a positive relationship with crime rates, implying that as populations increase, so does crime (Nolan, 2004). In this context, Los Angeles County serves as a particularly relevant case study. As the largest county in the United States in terms of population size, Los Angeles presents a unique opportunity to explore the relationship between population density and crime (California Counties by Population, 2024). The sheer scale of the county—home to nearly 10 million people—makes it an ideal focal point for examining how population size and urbanization might contribute to crime dynamics. Adding more layers to this topic is the racial and ethnic diversity of Los Angeles County, which complicates the relationship between population size and crime rates, as different communities may experience and be affected by crime in distinct ways. In particular, studies have shown that certain types of crime, such as violent crime and property crime, can disproportionately affect minority populations, especially in under-resourced neighborhoods (Barry, 2024; Turner & Greene, 2022). 
+
+In addition to exploring victim demographics, it is equally important to consider the spatial distribution of crime—in particular, how crime incidents cluster geographically within urban areas. This is because it is important to identify high-risk areas, since not all areas of the same city have the same crime rate; in fact, crime oftentimes concentrates in specific areas, commonly referred to as “hot spots” (Why Crimes Occur in Hot Spots | National Institute of Justice, n.d.). Furthermore, being able to predict what the spatial distribution of crime is would be especially beneficial to the safety of the general public. Thus, the first question we are interested in addressing is: **How accurately can we predict crime incidents by location (latitude/longitude), based on pre-existing clusters within Los Angeles County, and are there noticeable crime hot spots?** Evidently, there are varying factors that may influence the presence of these hot spots and the types of crimes committed, including poverty, lack of social services, low levels of community cohesion, and inadequate policing (Bowers et al., 2004). By mapping crime incidents based on their geographical coordinates, policymakers can identify areas that experience a disproportionate share of crime, which is crucial for prioritizing law enforcement efforts, designing crime prevention programs, and improving urban planning. In other words, in a county as large as Los Angeles, where neighborhoods differ widely across various factors, understanding the spatial dynamics of crime can help policymakers allocate resources more effectively and create safer environments for residents.
+
+Additional research has shown that victims of violent crime are more frequently under 30 years old, from low-income backgrounds, and disproportionately Latino or African American (Californians for Safety and Justice, 2017). This is especially a concern when considering that some counties, such as Los Angeles County, are predominantly comprised of a Latino demographic (Los Angeles County – Diversity | Clinical and Translational Science Institute, 2024). Despite current research on the topic, there is evidently a need for further research that is more up-to-date that addresses not just the prevalence of crime in specific areas, but that looks at the intersectionality of factors such as ethnicity, age, and sex of crime victims. As such, the second question we are interested in addressing is: **Do demographic characteristics, specifically ethnic descent, of crime victims play a noticeable role in the formation of a model that predicts grid-level crime counts?**
+
+To address our questions, we used data that includes a comprehensive record of crime incidents that were reported by the Los Angeles Police Department (LAPD). It originally contained 984,000 separate crime reports, and 28 variables that capture demographic, geographic, and crime-related features and information. Additionally, one of the outcome variables for our study, `crm_cd`, indicates the crime committed. Predictor variables include geographic coordinates (`lat`, `lon`), victim sex (`vict_sex`), victim age (`vict_age`), specific location that the crime occurred at (`location`, `area`), as well as the date that the incident occurred, since crime data ranges from 2020 to the present. To prepare this data for analysis, we took various preprocessing steps. Specifically, we ensured the minimization of missing variables across the data, log-transformed skewed variables (such as `target`) to normalize their scales, and ensured that only relevant variables were included in our analyses to reduce noise. Each of these preprocessing steps ensured the dataset was suitable for applications of machine-learning analyses to predict crime hotspots in Los Angeles County while analyzing demographic characteristics of crime victims and patterns of crime. Using this data, our goal was to enhance the understanding of social and spatial dynamics of crime while helping inform policies aimed at reducing victimization, addressing disparities, and creating safer, more resilient communities.
+
+
+```{r setup, include=FALSE}
+# control global Rmd chunk settings
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## Question
+
+1. How accurately can we predict crime incidents by location (latitude/longitude), based on pre-existing clusters within Los Angeles County, and are there noticeable crime hot spots?
+
+2. Do demographic characteristics, specifically ethnic descent, of crime victims play a noticeable role in the formation of a model that predicts grid-level crime counts?
+
+### Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(tidymodels)
+library(gridExtra)
+library(ggcorrplot)
+library(maps)
+library(sf)
+library(rnaturalearth)
+library(doRNG)
+library(randomForest)
+library(rnaturalearthdata)
+```
+
+
+## The Data
+
+The dataset used in this analysis is a comprehensive record of crime incidents reported by the Los Angeles Police Department (LAPD). It includes detailed information on the demographic of victims, locations of incidents, and other relevant factors to our questions. The dataset goes as far back as 2020 and is updated bi-weekly to ensure its relevance. Key columns to our analysis regarding the victims' demographic and the crime location in Los Angeles include victim sex (`vict_sex`), age (`vict_age`), descent (`vict_descent`), location (`location`; `area`) and date of the incident (`date_rptd`; `date_occ`; `time_occ`), as well as latitude (`lat`) and longitude (`lon`). 
+
+The dataset originally contains 984,000 separate crime reports and 28 variables specifying the type of crime, date, victim, among others. 
+
+### Data Import
+
+```{r}
+# reading in data
+data <- read_csv("Crime_Data_from_2020_to_Present.csv.zip")
+head(data, n = 10)
+```
+
+The following is a column-by-column description of the dataset (after changing variable names, as described in the data wrangling section):
+
+- `dr_no`: 	Division of Records Number; Official file number made up of a 2 digit year, area ID, and 5 digits.
+- `date_rptd`: Date the crime was reported.
+- `date_occ`: Date the crime occurred.
+- `time_occ`: Time the crime occurred.
+- `area`: The LAPD has 21 Community Police Stations referred to as Geographic Areas within the department. These Geographic Areas are sequentially numbered from 1-21.
+- area_name: Name of the `Area` number.
+- `rpt_dist_no`: Four-digit code that represents a sub-area within a Geographic Area. 
+- `crm_cd`: Indicates the crime committed.
+- `crm_cd_desc`: Description of the crime committed.
+- `mocodes`: (Modus Operandi) Activities associated with the suspect in commission of the crime.
+- `vict_age`: Victim age.
+- `vict_sex`: Victim sex (F - Female, M - Male, X - Unknown).
+- `vict_descent`: Victim's ethnicity (A - Other Asian, B - Black, C - Chinese, D - Cambodian, F - Filipino, G - Guamanian, H - Hispanic/Latin/Mexican, I - American Indian/Alaskan Native, J - Japanese, K - Korean, L - Laotian, O - Other, P - Pacific Islander, S - Samoan, U - Hawaiian, V - Vietnamese, W - White, X - Unknown, Z - Asian Indian).
+- `premis_cd`: The type of structure, vehicle, or location where the crime took place.
+- `premis_desc`: Description of `premis_cd`.
+- `weapon_used_cd`: Type of weapon used in the crime.
+- `weapon_desc`: Description of `weapon_used_cd`.
+- `status`: Status of the case (IC is default).
+- `status_desc`: Description of `status`.
+- `crm_cd_1`: Indicates the crime committed. Crime Code 1 is the primary and most serious one. Crime Code 2, 3, and 4 are respectively less serious offenses. Lower crime class numbers are more serious.
+- `crm_cd_2`: Contains a code for an additional crime, less serious than `crm_cd_1`.
+- `crm_cd_3`: Contains a code for an additional crime, less serious than `crm_cd_1` and `crm_cd_2`.
+- `crm_cd_4`: Contains a code for an additional crime, less serious than `crm_cd_1`, `crm_cd_2`, and `crm_cd_3`.
+- `location`: Street address of crime incident rounded to the nearest hundred block to maintain anonymity.
+- `cross_street`: Cross Street of address recorded.
+- `lat`: Latitude of location of crime.
+- `lon`: Longitude of location of crime.
+
+
+### Data Wrangling
+
+```{r}
+# removing variables not needed
+data <- data|>
+  select(-`Part 1-2`,-`Cross Street`)
+```
+
+First, we remove variables that are not needed for this analysis. 
+
+Seeing that many of the variable names had spaces in between them, we decided to change the names to have underscores instead of spaces to ensure better compatibility with coding standards and avoid potential errors during data processing or analysis.
+
+```{r}
+# finding columns with spaces
+columns_with_spaces <- grep(" ", names(data), value = TRUE)
+
+# print the columns with spaces
+cat("Columns with spaces in their names:\n")
+print(columns_with_spaces)
+```
+```{r}
+# replacing spaces in column names with underscores
+names(data) <- gsub(" ", "_", names(data))
+cat("Updated column names:\n")
+print(names(data))
+```
+
+We also noticed that many of the variable names had different capitalizations, making it more tedious since we would have to remember the different types of capitalization used for all variables. To avoid this, we changed the variable names to lowercase, ensuring consistency and simplifying the process of referencing them in our analysis.
+
+```{r}
+# making variable names lowercase
+names(data) <- tolower(names(data))
+cat("Updated column names:\n")
+print(names(data))
+```
+Afterwards, we were interested in exploring different variables included in our dataset, starting out with the age distribution.
+
+```{r}
+# histogram of age distribution of crime victims
+ggplot(data, aes(x = vict_age)) +
+  geom_histogram(binwidth = 5, fill = "darkslategray4", color = "black") +
+  labs(title = "Age Distribution of Crime Victims", x = "Age", y = "Count") +
+  theme_minimal()
+
+# histogram of age distribution of age victims not including 0
+ggplot(data, aes(x = vict_age)) +
+  geom_histogram(data = subset(data, vict_age != 0), binwidth = 5, fill = "darkslategray4", color = "black") +
+  labs(title = "Age Distribution of Crime Victims", x = "Age", y = "Count") +
+  theme_minimal()
+```
+
+```{r}
+# calculate proportion of rows with vict_age == 0
+data |> filter(vict_age == 0) |> summarize(nct = n()) / data |> summarize(nct = n())
+```
+
+Visualized is the distribution of victims by age, `vict_age`. We see that while it is pretty normally distributed, there is a very high spike at 0. The second visualization visualizes the same data but without the 0's. As seen by the calculation, roughly 26.7% of entries have a victim age of 0; this does not make sense, as a victim age of 0 is highly unlikely and likely indicates missing, erroneous, or placeholder data. A possible explanation is that 0 could be the default value is no age is listed in the report; therefore, we will convert all entries of `vict_age` with a value of 0 to NA.
+
+```{r}
+# replaces vict_age == 0 with NA
+data <- data |> 
+  mutate(vict_age = ifelse(vict_age == 0, NA, vict_age)) 
+```
+
+We were also looking at the sex distribution of victims.
+
+```{r}
+# bar graph of crime distribution by sex
+ggplot(data = data, aes(x = vict_sex)) +
+  geom_bar(fill = "darkslategray4", color = "black") +
+  labs(title = "Sex Distribution of Crime Victims", x = "Sex", y = "Count") +
+  theme_minimal()
+
+# bar graph of crime distribution by sex, specifically just M, F, and X
+ggplot(data[data$vict_sex %in% c("M", "F", "X"), ], aes(x = vict_sex)) +
+  geom_bar(fill = "darkslategray4", color = "black") +
+  labs(title = "Sex Distribution of Crime Victims", x = "Sex", y = "Count") +
+  theme_minimal()
+```
+
+The distribution of victim by sex, `vict_sex`, is visualized above. The distribution is not proportionate by gender, where more victims are men (M) than women (W); in addition, there are roughly 250,000 rows where the victim's sex is unknown (X) or not available (NA, -). We will treat "H" as an error, so we will remove it. In addition, we will treat unknown and not available as the same, so "X", "NA", and "-" will all be marked as "NA". 
+
+```{r}
+# cleaning sex variable
+data <- data |> 
+  mutate(vict_sex = ifelse(vict_sex == "X", "NA", ifelse(vict_sex == "-", "NA", vict_sex))) |> 
+  mutate(vict_sex = ifelse(is.na(vict_sex), "NA", vict_sex)) |> 
+  filter(vict_sex != "H")
+```
+
+Next, we were interested in visualizing the type of crime by the victim's sex.
+
+```{r}
+# filtering data pulled for visualization
+filtered_data <- data |> 
+  group_by(crm_cd_desc) |> 
+  summarize(crime_count = n()) |> 
+  filter(crime_count > 10000) |> 
+  inner_join(data, by = "crm_cd_desc") |> 
+  filter(vict_sex %in% c("M", "F", "NA"))
+
+# creating bar graph to visualize crime by participant sex
+ggplot(filtered_data[filtered_data$vict_sex %in% c("M", "F", "NA"), ], aes(x = crm_cd_desc, fill = vict_sex)) +
+  geom_bar(position = "dodge", color = "black") +
+  labs(title = "Crime Types by Victim Sex", x = "crm_cd_desc", y = "Count", fill = "vict_sex") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Above are different crimes visualized by the victim's sex. Because there are a variety of crimes, only commonly seen crimes--more than 10,000 appearances in the dataset--are visualized. There seems to be discrepancies by gender for some crimes; for example, "INTIMATE PARTNER - SIMPLE ASSAULT" occurs to females more than males, whereas "AGGRAVATED ASSAULT" happens to males more often. And "VEHICLE - STOLEN" has a high rate of victims that do not have an identified sex. Finally, "VANDALISM - MISDEAMEANOR ($399 OR LESS)" appears to be a rare example of a crime with an even distribution of men and women.
+
+```{r}
+# mapping vict_descent codes
+descent_labels <- c(
+  "A" = "Other Asian", "B" = "Black", "C" = "Chinese", "D" = "Cambodian",
+  "F" = "Filipino", "G" = "Guamanian", "H" = "Hispanic/Latin/Mexican", 
+  "I" = "American Indian/Alaskan Native", "J" = "Japanese", "K" = "Korean", 
+  "L" = "Laotian", "O" = "Other", "P" = "Pacific Islander", "S" = "Samoan",
+  "U" = "Hawaiian", "V" = "Vietnamese", "W" = "White", "X" = "Unknown", 
+  "Z" = "Asian Indian")
+
+# replace vict_descent codes with descriptive labels
+data <- data |> 
+  mutate(vict_descent = recode(vict_descent, !!!descent_labels))
+
+# creating bar graph of ethnicity distribution of crime victims
+ggplot(data, aes(y = vict_descent)) +
+  geom_bar(fill = "darkslategray4", color = "black") +
+  labs(
+    title = "Ethnicity Distribution of Crime Victims",
+    x = "Count",
+    y = "Descent"
+  ) +
+  theme_minimal() +
+  coord_flip() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# set threshold to visualize data with more ease
+threshold <- 10000
+
+# bar graph of ethnicity distribution of crime victims
+ggplot(data |>
+         count(vict_descent) |>
+         filter(n > threshold), 
+       aes(y = vict_descent, x = n)) +
+  geom_bar(stat = "identity", fill = "darkslategray4", color = "black") +
+  labs(title = "Ethnicity Distribution of Crime Victims", x = "Count", y = "Descent") +
+  theme_minimal() +
+  coord_flip()
+```
+
+Above is the distribution of victims by their descent, `vict_descent`. The first graph visualizes all descents whereas the second only visualizes descents that appear more than 10,000 times in the dataset. We filtered the ethnicity that were included in the graph to visualize it with more ease, since there was a very diverse demographic in Los Angeles. Filtering it allowed us to visualize demographics that seem to be the most affected. 
+
+We see that there is great discrepancies by a victim's descent; however, we need to take into account the demographics of Los Angeles. 
+
+```{r}
+# calculates the sum of the descent_demo vector
+descent_demo <- c("Asian" = .15, "White" = .25, "Black" = 0.09, "Latinx" = 0.49, "Pacific Islander" = .012, "Other/NA" = 0.008)
+sum(descent_demo)
+```
+
+Above is the general racial demographics of Los Angeles, adopted from a UCLA study (UCLA 2023). As proven, they sum up to 1 (100%). 
+
+```{r}
+# categorize vict_descent into broader ethnic groups
+data <- data |>
+  mutate(
+    ethn = case_when(
+      vict_descent %in% c("Other Asian", "Chinese", "Filipino", "Japanese", "Korean", "Laotian", "Vietnamese", "Asian Indian") ~ "Asian",
+      vict_descent %in% c("Black") ~ "Black",
+      vict_descent %in% c("White") ~ "White",
+      vict_descent %in% c("Hispanic/Latin/Mexican") ~ "Latinx",
+      vict_descent %in% c("Pacific Islander", "Guamanian", "Samoan", "Hawaiian") ~ "Pacific Islander",
+      TRUE ~ "Other/NA"  
+    )
+  )
+```
+
+To better visualize the trends by descent, more general labels are used; instead of the previous 20 labels (where it would be more difficult to find high-level trends), only 6 labels are used: Asian, Black, White, Latinx, Pacific Islander, and other. These simpler labels will allow us to identify higher level trends.
+
+```{r}
+# calculate ethnicity frequencies and proportions in the data
+ethnicity_table <- table(data$`ethn`) 
+ethnicity_prop <- ethnicity_table / sum(ethnicity_table)
+
+# compare and calculate percentage differences between demographics and data
+data.frame(
+  Demographic_Percent = 100 * descent_demo,
+  Data_Percent= 100 * ethnicity_prop[names(descent_demo)]
+) |>
+  mutate(Difference = Demographic_Percent - Data_Percent.Freq) |>
+  select(Demographic_Percent, Data_Percent.Freq, Difference) |>
+  rename(Percent_Difference = Difference, Data_Percent = Data_Percent.Freq)
+```
+
+For each ethnic descent, the table above visualizes the difference in frequency of the descent in dataset versus proportion of population demographic. An importance nuance to note is that "other", "NA", and "unknown" in criminal cases (summarized to other/NA here) should appear more often than in the racial demographic data due to the nature of crimes and crime reporting--a crime might not have a victim or the person documenting the crime might have neglected to ask for the victim's descent. Outside of the difference in this category, there are large discrepancies for the other ethnic descents. Asians, while accounting for 15% of the LA population, only appear in the crime data 3.9% of the time, or an 11.1% difference. People that identify as White, Latinx, and Pacific Islander are underrepresented as well in the crime data to different extend; Latinx individuals are underrepresented by 19.4%, where White people and Pacific Islanders are underrepresented by 4.9% and 1.1%, respectively. On the other hand, victims identifying as Black are overrepresented in the crime data by 4.5%.
+
+```{r}
+# convert date_occ to date format
+data$date_occ <- as.Date(data$date_occ, format = "%m/%d/%Y")
+
+# add year and month columns
+data <- data |>
+  mutate(year = year(date_occ),
+         month = month(date_occ, label = TRUE))
+
+# crimes by year
+ggplot(data, aes(x = factor(year))) +
+  geom_bar(fill = "darkslategray4", color = 'black') +
+  labs(title = "Crimes by Year", x = "Year", y = "Count") +
+  theme_minimal()
+
+# crimes by month
+ggplot(data, aes(x = month)) +
+  geom_bar(fill = "darkslategray4", color = 'black') +
+  labs(title = "Crimes by Month", x = "Month", y = "Count") +
+  theme_minimal()
+```
+
+Visualized above are the crime distributions by month and year. While there appears to be a uniform distribution by month, the by-year distribution shows a high uptick in crime in 2020 and smaller spikes in 2022 and 2023. These indicate that the year, but not month, can be a valuable indicator of whether more or less crime occurs. Let's investigate the year-by-year distribution of crimes reported more.
+
+```{r}
+# summarize crimes by area and year
+crime_area_year <- data |>
+  group_by(area_name, year) |>
+  summarise(crime_count = n())
+
+# plot crime count trends over time by area
+ggplot(crime_area_year, aes(x = year, y = crime_count, color = area_name)) +
+  geom_line() +
+  labs(title = "Crime Density by Area Over Time", x = "Year", y = "Crime Count") +
+  theme_minimal() +
+  theme(legend.position = "bottom")
+```
+
+Visualized above are the crime counts of different areas within Los Angeles by year. As we can see, numerous areas had a count of 0 for 2021. This was due to the FBI changing databases, where some counties took a year to adjust to the new reporting system (Marshall Project, 2022). **To train a fair model that predicts true differences in crime counts by region, we will exclude 2021 data.**
+
+Other than this interesting insight, most areas (at a first glance) seem to align with the following trend: no change or slight decrease in crime from 2020 to 2021, followed by an increase in 2022, constant amount of crime when comparing 2022 and 2023, and then a decrease in 2024. The decrease in 2024 could be a result of 2024 not being over. 
+
+Some regions tend to have more crime than others; Central appears to consistently have the most crime, whereas Foothill has the least. An interesting note is that many areas had their peak in crime in 2020. 
+
+```{r}
+# Get data from every year but 2021
+data <- data |>
+  filter(year != 2021)
+```
+
+
+```{r}
+# add day of the week column
+data <- data |>
+  mutate(day_of_week = weekdays(date_occ))
+
+# crimes by day of the week
+ggplot(data, aes(x = day_of_week)) +
+  geom_bar(fill = "darkslategray4", color = 'black') +
+  labs(title = "Crimes by Day of the Week", x = "Day of the Week", y = "Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Visualized above are the crime distributions by day of the week. Similar to the month-by-month distribution, there seems to be a uniform distribution of crime by day of the week. This indicates that the day of the week does not impact whether more or less crime occurs.
+
+```{r}
+# detecting outliers in Victim Age
+data$vict_age <- as.numeric(data$vict_age)
+ggplot(data, aes(x = "", y = vict_age)) +
+  geom_boxplot(fill = "darkslategray4", color = "black") +
+  labs(title = "Outliers in Victim Age", y = "Victim Age") +
+  theme_minimal()
+```
+
+We created this boxplot to visually identify any outliers in the `vict_age` variable. The plot helps us understand the distribution of ages, including the median and quartiles, while highlighting any extreme values. Outliers are represented as points outside the whiskers, making it easy for us to spot unusual or extreme ages. This is useful for cleaning the data or exploring patterns in victim age. Overall, it provides us with a clear overview of the age distribution in the dataset.
+
+We then chose to explore geospatial trends to better guage any geographical patterns evident with crime data in Los Angeles. We created a bar plot to visualize the count of occurrences for each `area_name` in the dataset. The plot displayed the distribution of crime data across different areas, with the height of each bar representing the number of crime records for each specific area. This helped us identify areas with higher or lower crime counts, offering insights into the geographic distribution of the crime data.
+
+
+```{r}
+# bar plot of count of each area name
+ggplot(data, aes(y=area_name))+
+  geom_bar()
+```
+
+As seen above the Central area has the most crimes recorded. Although 77th street has the second largest out of the areas, it is because it is the location of the central law enforcement hub for the city of Los Angeles.
+
+Afterward, we generated three bar plots to visualize the distribution of different victim characteristics in the dataset. The first plot (plot1) showed the age distribution of crime victims (`vict_age`), highlighting which age groups were most affected by crime. The second plot (plot2) displayed the gender distribution of victims (`vict_sex`), indicating the proportion of male and female victims. The third plot (plot3) visualized the descent or ethnicity of victims (`vict_descent`), shedding light on the racial composition of those affected by crime. The grid.arrange() function arranged these plots side by side for easy comparison.
+
+```{r}
+# bar plots of different demographics
+plot1 <- ggplot(data, aes(x=vict_age))+
+  geom_bar()
+
+plot2 <- ggplot(data, aes(x=vict_sex))+
+  geom_bar()
+
+plot3 <- ggplot(data, aes(y=vict_descent))+
+  geom_bar()
+
+grid.arrange(plot1, plot2, plot3, ncol=3)
+```
+
+The age distribution of crime victims, as shown in Plot 1, highlights that individuals aged 35 to 45 are the most common age range among crime victims. This finding differed from existing studies that link increased social exposure and risk-taking behaviors to heightened vulnerability among younger adults. These observed trends will service us in the creation of our model.
+
+We then shifted our focus to creating a model and accompanying dataset to predict crime counts; first was the data. Because our data is constricted to LA, we need to divide our data into geospatial groups to conduct our analysis. While we have access to `AREA NAME`, there are only 20 unique values; this is not enough to rigorously test a model. Therefore, we decided to split our data into groups based on `LAT` and `LON`. We split the data into 2-square-mile squares. This was decided upon as it splits our data into enough groups to test a model while preventing overfitting; if we split up the data any more, we could risk the splitting up the data too much such that the model could struggle to generalize on unseen data.
+
+We first needed to see if there were any irregular patterns in `LAT` and/or `LON`. 
+
+```{r}
+# histogram of lat for LA crime distribution
+ggplot(data, aes(x = `lat`)) +
+  geom_histogram(binwidth = .1, fill = "darkslategray4", color = "black") +
+  labs(title = "Distribution of Latitudes of L.A. Crimes", x = "Latitude", y = "Count") +
+  theme_minimal()
+
+# histogram of lon for LA crime distribution
+ggplot(data, aes(x = `lon`)) +
+  geom_histogram(binwidth = .1, fill = "darkslategray4", color = "black") +
+  labs(title = "Distribution of Longitudes of L.A. Crimes", x = "Longitude", y = "Count") +
+  theme_minimal()
+```
+
+We see both distributions of `lat` and `lon` contain 0's, even though L.A. is concentrated around the coordinates (34.0549, -118.2426). Let's visualize the distributions without the 0's.
+
+```{r}
+# histogram of lat for LA excluding zero values
+ggplot(data, aes(x = `lat`)) +
+  geom_histogram(data = subset(data, `lat` != 0), binwidth = .1, fill = "darkslategray4", color = "black") +
+  labs(title = "Distribution of Latitudes of L.A. Crimes", x = "Latitude", y = "Count") +
+  theme_minimal()
+
+# histogram of lon for LA excluding zero values
+ggplot(data, aes(x = `lon`)) +
+  geom_histogram(data = subset(data, `lon` != 0), binwidth = .1, fill = "darkslategray4", color = "black") +
+  labs(title = "Distribution of Longitudes of L.A. Crimes", x = "Longitude", y = "Count") +
+  theme_minimal()
+```
+
+These distributions look much better. Therefore, we will exclude 0 and NA from `LAT` and `LON`. To get 2-square-mile squares, we need to convert 2 miles into degrees of `LAT` and `LON` for Los Angeles specifically. Every 69 miles in one degree of latitude and longitude at the equator, but for Los Angeles, every degree of latitude is 69 miles and (69 * cos(pi * 34 / 180)) miles for longitude (this is a formula that takes into account the latitude of LA, which is 34 degrees). These values are used as the denominators; for the numerator, we use the square root of the length we are looking for, which is 2 miles. Therefore, we divide sqrt(2) = 1.414 by the previously found equations. This gives us 2 miles of latitude and longitude in terms of degrees. From there, we subtract the `LAT` and `LON` values by their respective minimums and divide by the respective calculation for 2 miles in terms of degrees. This gives us latitude and longitude groups, which we can combine to form a grid of groups; we named this variable `grid_id`.
+
+
+```{r}
+# filter out poorly record lat and lon
+data <- data |>
+  filter(is.na(lat) == FALSE, is.na(lon) == FALSE, lon != 0, lat != 0)
+
+# get 4 miles in terms of degrees for lat and lon
+lat_side_length <- 1.414 / 69 
+lon_side_length <- 1.414 / (69 * cos(pi * 34 / 180))
+
+# create grid IDs
+data$lat_group <- floor((data$lat - min(data$lat)) / lat_side_length)
+data$lon_group <- floor((data$lon - min(data$lon)) / lon_side_length)
+data$grid_id <- paste(data$lat_group, data$lon_group, sep = "_")
+```
+
+```{r}
+length(unique(data$grid_id))
+```
+
+As we see, this creates 306 evenly-sized (in terms of area covered) geospatial groups. This will be sufficient to create and test a model, where the model has the opportunity to generalize to unseen data groups. To ensure that every group is not lacking any data, let's plot the distribution.
+
+```{r}
+# get count for grid_id
+group_loc_counts <- data |>
+  group_by(grid_id) |>
+  summarise(Count = n())
+
+# plot a histogram of counts
+ggplot(group_loc_counts, aes(x = Count)) +
+  geom_histogram(binwidth = 1000, boundary = 0, fill = "darkslategray4", color = "black") +
+  labs(title = "Histogram of Number of Crimes by Grid Square",
+       x = "Count of Crimes per Grid",
+       y = "Frequency") +
+  theme_minimal()
+```
+
+Plotted is the distribution of crimes by grid. The distribution is skewed, which is typical for crime data: most areas have relatively low crime counts, while certain high-crime regions disproportionately affect the overall distribution. In this case, the majority of grids reported between 500 and 5,000 crimes from 2020 to 2024, with outliers reaching nearly 45,000 reported crimes. Due to the skewed nature of this data, we decided to log transform the variable; this will occur later when the model-friendly dataset is created.
+
+We then decided to explore the presence of NA's in the dataset.
+
+
+```{r}
+# check for missing values in the dataset
+colSums(is.na(data))
+```
+
+Visualized above is the number of NA values per column. While most columns have 0 NA values, the following columns have frequent NA values: `mocodes`, `vict_descent`, `weapon_used_cd`, `weapon_desc`, `crm_cd_2`, `crm_cd_3`, and `crm_cd_4`. These make sense as not every crime has these aspects--activities associated with the crime (`mocodes`), weapons (2 weapon-related variables), and multiple criminal charges (`crm_cd` variables). 
+
+
+
+To prepare the data for the model, we need to reduce the data into one entry per `grid_id`. Therefore, we will group by `grid_id` and do the following transformations:
+
+- `date_rptd`: ignored due to including `year`, `month`, and `day_of_week` variables
+- `date_occ`: ignored due to including `year`, `month`, and `day_of_week` variables
+- `time_occ`: top 5 most common hours (or top x if x is less than 5 and the grid only has x unique values)
+- `area`: a list of unique values for the specific grid
+- `rpt_dist_no`: top 5 most reported district numbers (or top x if x is less than 5 and the grid only has x unique values)
+- `vict_age`: average age of a victim and most common
+- `vict_sex`: proportion male and female victims
+- `vict_descent`: proportion of victims by descent using abbreviated categories, given by `ethn`
+- `premis_cd`: top 10 most common (or top x if x is less than 10 and the grid only has x unique values)
+- `weapon_used_cd`: top 3 most common (or top x if x is less than 3 and the grid only has x unique values)
+- `status`: distribution of status'
+- `crime_cd_1`: top 10 most common (or top x if x is less than 10 and the grid only has x unique values)
+- `crime_cd_2`, `crime_cd_3`, `crime_cd_4`: top 2 most common (or top x if x is less than 2 and the grid only has x unique values)
+- `year`: distribution by year
+- `month`: distribution by month
+- `day_of_week`: distribution by day of week
+
+```{r}
+# function to get top n values for a given column
+get_top_n <- function(x, n) {
+  top_n <- names(sort(table(x), decreasing = TRUE))[1:n]
+  
+  if (length(top_n) < n) {
+    top_n <- c(top_n, rep(NA, n - length(top_n)))
+  }
+  
+  return(top_n)
+}
+
+# convert vict_age to integer
+data$vict_age <- as.integer(data$vict_age)
+
+# aggregate data by grid_id with various statistical summaries and proportions
+model_data <- data |>
+  mutate(time_occ = as.integer(as.integer(time_occ) / 100)) |>
+  group_by(grid_id) |>
+  summarize(target = n(), 
+            lat_group = first(lat_group),
+            lon_group = first(lon_group),
+            time_occ = list(get_top_n(time_occ, 5)),
+            area = list(unique(area)),
+            rpt_dist_no_new = list(get_top_n(rpt_dist_no, 5)),
+            vict_age_avg = mean(vict_age, na.rm = TRUE),
+            vict_age_mode = names(sort(table(vict_age), decreasing = TRUE))[1],
+            vict_sex_prop = list(prop.table(table(vict_sex))),
+            vict_descent_prop = list(prop.table(table(`ethn`))),
+            premis_cd_new = list(get_top_n(`premis_cd`, 10)),
+            weapon_used_cd_new = list(get_top_n(`weapon_used_cd`, 3)),
+            status_prop = list(prop.table(table(status))),
+            crime_cd_1 = list(get_top_n(`crm_cd_1`, 10)),
+            crime_cd_2 = list(get_top_n(`crm_cd_2`, 2)),
+            crime_cd_3 = list(get_top_n(`crm_cd_3`, 2)),
+            crime_cd_4 = list(get_top_n(`crm_cd_4`, 2)),
+            year_prop = list(prop.table(table(year))),
+            month_prop = list(prop.table(table(month))),
+            day_of_week_prop = list(prop.table(table(day_of_week)))
+  )
+
+# view data
+head(model_data, n=10)
+```
+
+We need to unnest the model_data such that there are no lists. We use unnest_wider to do this. In addition, to prevent multicollinearity, we drop the last value in proportion tables. For instance, for victim gender proportions in a region, there will be 3 categories (typically): male, female, and NA. These values are guaranteed to sum to 1; if we include all 3, NA could be determined from the male and female proportions, meaning it is redundant and will introduce multicollinearity into the model. Therefore, for proportion calculations, we drop the last value. This includes the variables `vict_sex_prop`, `vict_descent_prop`, `status_prop`, `year_prop`, `month_prop`, `day_of_week_prop`. In addition, we convert the appropriate columns to numeric.
+
+Finally, as mentioned prior, due to the skewed nature of crime frequency by area, we decided to log transform the variable `target`.
+
+```{r}
+# unnest columns, convert to numeric, and apply log transformation
+unnested_model_data <- model_data |>
+  unnest_wider(time_occ, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(area, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(rpt_dist_no_new, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(vict_sex_prop, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(vict_descent_prop, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(premis_cd_new, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(weapon_used_cd_new, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(status_prop, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(crime_cd_1, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(crime_cd_2, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(crime_cd_3, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(crime_cd_4, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(year_prop, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(month_prop, names_repair = "unique", names_sep = "_") |>
+  unnest_wider(day_of_week_prop, names_repair = "unique", names_sep = "_") |>
+  select(-vict_sex_prop_NA, -vict_descent_prop_White, -status_prop_CC, -year_prop_2024, -month_prop_Dec, -day_of_week_prop_Sunday)  |>
+  mutate(time_occ_1 = as.numeric(as.character(time_occ_1)),
+         time_occ_2 = as.numeric(as.character(time_occ_2)),
+         time_occ_3 = as.numeric(as.character(time_occ_3)),
+         time_occ_4 = as.numeric(as.character(time_occ_4)),
+         time_occ_5 = as.numeric(as.character(time_occ_5)),
+         vict_age_mode = as.numeric(as.character(vict_age_mode)),
+         vict_sex_prop_F = as.numeric(as.character(vict_sex_prop_F)),
+         vict_sex_prop_M = as.numeric(as.character(vict_sex_prop_M)),
+         vict_descent_prop_Asian = as.numeric(as.character(vict_descent_prop_Asian)),
+         vict_descent_prop_Black = as.numeric(as.character(vict_descent_prop_Black)),
+         vict_descent_prop_Latinx = as.numeric(as.character(vict_descent_prop_Latinx)),
+         `vict_descent_prop_Other/NA` = as.numeric(as.character(`vict_descent_prop_Other/NA`)),
+         `vict_descent_prop_Pacific Islander` = as.numeric(as.character(`vict_descent_prop_Pacific Islander`)),
+         status_prop_AA = as.numeric(as.character(status_prop_AA)),
+         status_prop_AO = as.numeric(as.character(status_prop_AO)),
+         status_prop_IC = as.numeric(as.character(status_prop_IC)),
+         status_prop_JA = as.numeric(as.character(status_prop_JA)),
+         status_prop_JO = as.numeric(as.character(status_prop_JO)),
+         year_prop_2020 = as.numeric(as.character(year_prop_2020)), 
+         year_prop_2022 = as.numeric(as.character(year_prop_2022)), #no 2021 due to reporting discrepancies
+         year_prop_2023 = as.numeric(as.character(year_prop_2023)),
+         month_prop_Jan = as.numeric(as.character(month_prop_Jan)),
+         month_prop_Feb = as.numeric(as.character(month_prop_Feb)),
+         month_prop_Mar = as.numeric(as.character(month_prop_Mar)),
+         month_prop_Apr = as.numeric(as.character(month_prop_Apr)),
+         month_prop_May = as.numeric(as.character(month_prop_May)),
+         month_prop_Jun = as.numeric(as.character(month_prop_Jun)),
+         month_prop_Jul = as.numeric(as.character(month_prop_Jul)),
+         month_prop_Aug = as.numeric(as.character(month_prop_Aug)),
+         month_prop_Sep = as.numeric(as.character(month_prop_Sep)),
+         month_prop_Oct = as.numeric(as.character(month_prop_Oct)),
+         month_prop_Nov = as.numeric(as.character(month_prop_Nov)),
+         day_of_week_prop_Monday = as.numeric(as.character(day_of_week_prop_Monday)),
+         day_of_week_prop_Tuesday = as.numeric(as.character(day_of_week_prop_Tuesday)),
+         day_of_week_prop_Wednesday = as.numeric(as.character(day_of_week_prop_Wednesday)),
+         day_of_week_prop_Thursday = as.numeric(as.character(day_of_week_prop_Thursday)),
+         day_of_week_prop_Friday = as.numeric(as.character(day_of_week_prop_Friday)),
+         day_of_week_prop_Saturday = as.numeric(as.character(day_of_week_prop_Saturday))) |>
+  mutate(target = log(target))
+```
+
+This code works by first unnesting lists into separate columns; it then converts numeric columns currently incorrectly stored into the correct type. Finally, as mention prior, we log-transform `target`. Next, we will further explore NA variables.
+
+```{r}
+# check for missing values in the dataset
+colSums(is.na(unnested_model_data))
+```
+
+Visualized above is the number of NA values per column. To determine which columns to further preprocess for NA-related issues, we will define too many NAs present as greater than 50% of the data, or 153 entries.
+Using this definition, we flagged the following columns: `area_2`, `area_3`, `area_4`, `area_5`, `crime_cd_3_2`, `crime_cd_4_1`, and `crime_cd_4_2`. We chose to exclude these variables--instead of converting them to binaries if a value was present or it was NA--as they are extensions of other variables in the dataset (i.e. `area_1` and `crim_cd_1_` variables); therefore, these sparse columns are unlikely to provide significant predictive power given their high proportion of missing data and limited relevance to the model's primary objectives. While `vict_descent_prop_Pacific Islander` is close to the cut off, we will keep it as it is important for investigating the impact of racial demographics on crime victim patterns.
+
+We will now remove variables with too many NA values; then, we will replace NA values with "Not available" for columns of type character and 0 for columns of type numeric. 
+
+```{r}
+# remove columns and replace NAs in character/numeric columns
+unnested_model_data <- unnested_model_data |>
+  select(-area_2, -area_3, -area_4, -area_5, -crime_cd_3_2, -crime_cd_4_1, -crime_cd_4_2) |>
+  mutate(across(where(is.character), ~ ifelse(is.na(.), "Not available", .))) |>
+  mutate(across(where(is.numeric), ~ ifelse(is.na(.), 0, .)))
+```
+
+```{r}
+# calculate correlation matrix for numeric columns
+cor_data <- cor(unnested_model_data |> select_if(is.numeric))
+
+# identifying pairs of variables in the correlation matrix with a correlation coefficient greater than 0.85 
+high_corr <- which(abs(cor_data) > 0.85, arr.ind = TRUE)
+
+# creating dataframe with variables in 'high_corr'
+correlation_pairs <- data.frame(
+  var1 = rownames(cor_data)[high_corr[, 1]],
+  var2 = colnames(cor_data)[high_corr[, 2]],
+  correlation = cor_data[high_corr]
+)
+
+# print variables that are redundant
+print(correlation_pairs[correlation_pairs$var1 != correlation_pairs$var2, ])
+```
+
+Because there are so many numeric variables available for the model, we chose to visualize only highly-related variables. To do this, we calculated the correlation matrix and only displayed pairs of variables that had a correlation with an absolute value greater than 0.85; any pairs should be disqualified from being in the final model at the same time. As we see, there are no such pairs of variables that have a correlation with an absolute value greater than 0.85. Therefore, we can continue exploring all the variables in the dataset while creating our model.
+
+
+## Analysis
+
+We decided to use a random forest predictor to predict `target`. Unlike a linear model, a random forest predictor is not as susceptible to multicollinearity; this allows the model to be robust and be more likely to generalize to unseen data. Therefore, we can include all variables in the dataset in our model and let the model decide which is important in determining the frequency of crime in a region. In addition, a random forest model is useful as it can capture nonlinear relationships, which can be helpful in our situation where some of the many variables we are using will likely have a non-linear relationship with `target`. 
+
+To answer our questions, we created two models: the first with all variables at its disposal and the second with all variables except `ethn`- and `vict_descent`-related variables. The overall model serves as the baseline model and allows us to answer our first question--with what accuracy are we able to predict crime counts at the grid level given grid-specific data. We can also see the impact of `ethn`- and `vict_descent`-related variables based on their 'importance' values assigned by the model during its creation. The second model that excludes `ethn`- and `vict_descent`-related variables can be compared to the overall model, in terms of evaluation metrics (accuracy, RMSE, and R-squared). This will allow us to see how these specific variables further impact the overall model, and whether their exclusion hinders or improves the model; this will guide the answer to the second question--do racial factors influence crime levels.
+
+### Overall Model
+
+
+```{r}
+# random number generator
+set.seed(123)
+
+# assign to pm
+pm <- unnested_model_data
+
+# convert target to numeric
+pm$target <- as.numeric(pm$target)
+
+# split pm into training and testing
+pm_split <- rsample::initial_split(data = pm, prop = 2/3)
+train_pm <- rsample::training(pm_split)
+test_pm <- rsample::testing(pm_split)
+
+# 4-fold cross validation on train_pm dataset
+vfold_pm <- rsample::vfold_cv(data = train_pm, v = 4)
+
+# identify character type columns
+char_cols <- names(pm)[sapply(pm, is.character)]
+
+# recipe for preprocessing + define roles + transformations
+RF_rec <- recipe(train_pm) |>
+    update_role(everything(), new_role = "predictor")|>
+    update_role(target, new_role = "outcome")|>
+    update_role(grid_id, new_role = "id variable") |>
+    step_novel(char_cols) |>
+    step_string2factor(char_cols) |>
+    step_dummy(char_cols) |>
+    step_novel(all_nominal()) |>
+    step_corr(all_numeric()) |>
+    step_nzv(all_numeric())
+
+# random forest regression model
+RF_PM_model <- parsnip::rand_forest(mtry = 10, min_n = 3) |> 
+  set_engine("randomForest") |>
+  set_mode("regression")
+  
+# workflow combinng recipe and random forest model
+RF_wflow <- workflows::workflow() |>
+  workflows::add_recipe(RF_rec) |>
+  workflows::add_model(RF_PM_model)
+
+# fit workflow to data
+RF_wflow_fit <- parsnip::fit(RF_wflow, data = train_pm)
+```
+
+We performed a cross-validation (4-fold) on the training data to evaluate the random forest regression model's performance using fit_resamples. The code we wrote then sets up and fits a random forest regression model, applying feature engineering steps like creating dummy variables and handling correlations and near-zero variance predictors, and finally visualizes the most important features from the fitted random forest model using the vip package. The set.seed(123) ensures reproducibility of the random sampling. 
+
+
+```{r}
+# cross-validation + collect metrics
+set.seed(123)
+resample_RF_fit <- tune::fit_resamples(RF_wflow, vfold_pm)
+collect_metrics(resample_RF_fit)
+```
+
+This code performs 4-fold cross-validation on the random forest model (RF_wflow) using fit_resamples, and collects and displays the performance metrics (e.g., RMSE, R-squared) from the cross-validation results with the collect_metrics function. As seen, the model, on average, accounts for roughly 95% of the variability in crime frequency; this indicates that the model is very effective at explaining the variance in the `target` variable. In addition, the RMSE is 0.595 log-transformed crime count. Both of these evaluation metrics will serve as the basis for comparisons with the other model and later improvements to this model. Let us see how it does on the testing data after hyperparameter testing. 
+ 
+
+```{r}
+# random forest model with tunable mtry and min_n
+set.seed(123)
+tune_RF_model <- rand_forest(mtry = tune(), min_n = tune()) |>
+  set_engine("randomForest") |>
+  set_mode("regression")
+
+# workflow with tunable random forest model + recipe
+RF_tune_wflow <- workflows::workflow() |>
+  workflows::add_recipe(RF_rec) |>
+  workflows::add_model(tune_RF_model)
+
+# detect available CPU cores
+n_cores <- parallel::detectCores()
+
+# register random number generator for parallel processing
+registerDoRNG(123)
+
+# register parallel backend
+doParallel::registerDoParallel(cores = n_cores)
+
+# tune random forest model w/ grid search
+tune_RF_results <- tune_grid(object = RF_tune_wflow, resamples = vfold_pm, grid = 20)
+
+# select best model based on lowest RMSE
+tuned_RF_values<- select_best(tune_RF_results, metric = "rmse")
+
+# finalize workflow with best-tunes random forest parameters
+RF_tuned_wflow <-RF_tune_wflow |>
+  tune::finalize_workflow(tuned_RF_values)
+
+# fit model with those parameters on train AND test
+overallfit <- RF_wflow |>
+  tune::last_fit(pm_split)
+
+# collect and display performance metrics
+test_predictions <- collect_metrics(overallfit)
+test_predictions
+```
+
+The code above defines a hyperparameter tuning process for our random forest model (tune_RF_model) by tuning the mtry and min_n hyperparameters using tune(), then set up a workflow to include the recipe and model. It uses tune_grid for hyperparameter tuning over 20 different combinations of mtry and min_n, selecting the best model based on RMSE, and finalizes the workflow with select_best. The final model is then fitted on both the training and testing data using last_fit, and predictions on the test data are collected.
+
+The R^2 value of 0.918 indicates that 91.8% of the variability in crime frequency levels can be explained by the model. This a decrease of 3.2% from the training data's R-squared value. On top of this, the RMSE is 0.606 log-transformed crime count, an increase of 0.011 log-transformed crime count from before. These results indicate that our model struggled to generalize as it slightly overfit the training data--more than the normal amount, where a small increase in RMSE and dip in R^2 from the training to testing data is normal.
+
+
+```{r}
+# compare predicted values with actual target
+compare <- test_pm |>
+  mutate(.pred = collect_predictions(overallfit)$.pred) |>
+  select(.pred, target)
+
+# calculate proportion of predictions
+sum(abs(compare$target - compare$.pred) / compare$target < .1) / nrow(compare)
+```
+
+To computer model accuracy, we compared the predictions to the actual values, where correct predictions were defined to be within 10% of the actual value. A 10% margin is a small margin that indicates high precision.
+
+Thus, we conclude that **the overall random forest model can predict crime incidents by location within Los Angeles County (using clustering techniques) at an accuracy of 75.5%**.  
+
+Let's now explore if there noticeable crime hot spots.
+
+
+```{r}
+# add predictions to test_pm and select relevant columns
+test_guesses <- test_pm |>
+  mutate(.pred = collect_predictions(overallfit)$.pred) |>
+  select(.pred, target, lat_group, lon_group)
+
+# generate predictions using trained workflow
+trained_workflow <- extract_workflow(overallfit)
+train_guesses <- train_pm |>
+  mutate(.pred = predict(trained_workflow, new_data = train_pm)$.pred) |>
+  select(.pred, target, lat_group, lon_group)
+
+# combine test and train guesses into one dataset
+all_guess_and_actual <- bind_rows(test_guesses, train_guesses)
+
+# load country geometries as sf object
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# utilized Chat-GPT to help define polygon information for mapping purposes
+squares <- unnested_model_data |>
+  distinct(lat_group, lon_group, grid_id) |>
+  rowwise() |>
+  mutate(
+    lat_min = min(data$lat) + lat_group * lat_side_length,
+    lat_max = lat_min + lat_side_length,
+    lon_min = min(data$lon) + lon_group * lon_side_length,
+    lon_max = lon_min + lon_side_length,
+    geometry = st_sfc(st_polygon(list(matrix(
+      c(
+        lon_min, lat_min,
+        lon_min, lat_max, 
+        lon_max, lat_max,
+        lon_max, lat_min,
+        lon_min, lat_min 
+      ),
+      ncol = 2,
+      byrow = TRUE
+    ))))
+  ) |>
+  ungroup() |>
+  st_as_sf(crs = 4326)
+
+# merge squares by lat and lon groups
+squares_all <- merge(squares, all_guess_and_actual, by = c("lat_group", "lon_group"), all.x = TRUE)
+
+# calculate absolute difference between predictions and actual target values
+squares_all$diff <- abs(squares_all$.pred - squares_all$target)
+  
+# create map with squares_all data colored by target variable
+ggplot() +
+  geom_sf(data = world, fill = "gray95", color = "gray45") +
+  geom_sf(data = squares_all, aes(fill = target), alpha = 0.7, color = "black") +
+  scale_fill_gradient2(
+    low = "white", mid = "yellow", high = "red",  
+    limits = c(0, max(squares_all$target)),
+    midpoint =4.5,
+    oob = scales::squish
+  ) +
+  theme_minimal() +
+  coord_sf(xlim = c(-118.8, -118.1), ylim = c(33.6, 34.4), expand = FALSE) +
+  theme() + 
+  labs(
+    title = "True Grid-Level, Log-Transformed Crime Counts",
+    x = "Longitude",
+    y = "Latitude",
+    fill = "Log(Crime Count)"
+  )
+
+# create map with squares_all colored by predicted values
+ggplot() +
+  geom_sf(data = world, fill = "gray95", color = "gray45") +
+  geom_sf(data = squares_all, aes(fill = .pred), alpha = 0.9, color = "black") +
+  scale_fill_gradient2(
+    low = "white", mid = "yellow", high = "red",  
+    limits = c(0, max(squares_all$target)),
+    oob = scales::squish,
+    midpoint = 4.5
+  ) +
+  theme_minimal() +
+  coord_sf(xlim = c(-118.8, -118.1), ylim = c(33.6, 34.4), expand = FALSE) +
+  theme() + 
+  labs(
+    title = "Predicted Grid-Level, Log-Transformed Crime Counts",
+    x = "Longitude",
+    y = "Latitude",
+    fill = "Log(Crime Count)"
+  )
+```
+
+Plotted are the true log-transformed crime counts per polygon and the predicted log-transformed crime counts--using the training and testing data. The color gradient starts with white at 0, then a yellow, and then red as the log-transformed crime count increases. Both maps seem to be displaying 1 main hotspot and 2 less noticeable, but still present, hotspots. The main hotspot is in downtown LA centered at (34.05, -118.25); this is next to Skid Row, which is known to be a rough part of Los Angeles. The first of the other two hot spots is centered at (34.2, -118.45); this hot spot is not as extreme as the first, but is as wide spread (as indicated by the orange color over the entire area surrounding it). The third and final hot spot is more isolated, located at (33.75, -118.275). This hot spot is not as extreme as the first--as highlighted by its dark orange, not red, color--and is concentrated in the area. 
+
+Finally, let us explore how important `ethn` (the abbreviated version of `vict_descent`) was in the creation of the model.
+
+```{r}
+# extract the feature importance data for the 100 most important features
+vip_data <- RF_wflow_fit |>
+  extract_fit_parsnip() |>
+  vip::vip(num_features =100)
+
+# convert the data to a list of feature names and their importance values
+feature_list <- vip_data$data |>
+  arrange(desc(Importance)) |>
+  slice_head(n = 100) |>
+  select(Variable, Importance) |>
+  deframe()
+
+
+data.frame(importance_value = feature_list)
+```
+
+Plotted are the top 100 variables in the model, ranked by the importance metric. As we can see, `vict_descent_prop_Black` and `vict_descent_prop_Pacific Islander` are in the top 10 most important variables for this random forest with value of 22 and 21.4, respectively; this indicates racial descent's high impact on area-focused crime count. While the third most important is `vict_descent_prop_Asian` at position 30 (in terms of importance), it still has a high importance value of 9.7. Therefore, this model greatly utilized `vict_descent` in its creation; now, let us examine this variables impact form another angle: the impact of excluding `vict_descent` from the random forest model completely.
+
+### Without Race Factors
+
+This model excluded the following socioeconomic variables: `vict_descent_prop_Asian`, `vict_descent_prop_Black`, `vict_descent_prop_Latinx`, `vict_descent_prop_Other`, and `vict_descent_prop_Pacific`. This is done to see the impact of these variables on the overall model, where the model without them will serve as a valuable comparison.
+
+
+```{r}
+set.seed(123)
+
+# remove specific columns
+pm2 <- unnested_model_data |> select(-vict_descent_prop_Asian, -vict_descent_prop_Black, -vict_descent_prop_Latinx, -`vict_descent_prop_Other/NA`, -`vict_descent_prop_Pacific Islander`)
+
+# convert to numeric
+pm2$target <- as.numeric(pm2$target)
+
+# split pm2 into training and testing sets
+pm2_split <- rsample::initial_split(data = pm2, prop = 2/3)
+train_pm2 <- rsample::training(pm2_split)
+test_pm2 <- rsample::testing(pm2_split)
+
+# perform 4-fold cross-validation on train_pm2 dataset
+vfold_pm2 <- rsample::vfold_cv(data = train_pm2, v = 4)
+
+# preprocessing recipe creation for train_pm2 w/ specific transformations
+RF_rec2 <- recipe(train_pm2) |>
+    update_role(everything(), new_role = "predictor")|>
+    update_role(target, new_role = "outcome")|>
+    update_role(grid_id, new_role = "id variable") |>
+    step_novel(char_cols) |>
+    step_string2factor(char_cols) |>
+    step_dummy(char_cols) |>
+    step_novel(all_nominal()) |>
+    step_corr(all_numeric()) |>
+    step_nzv(all_numeric())
+
+# random forest regression model w/ specific parameters
+RF_PM_model2 <- parsnip::rand_forest(mtry = 10, min_n = 3) |> 
+  set_engine("randomForest") |>
+  set_mode("regression")
+  
+# workflow combining RF_rec2 recipe and RF_PM_model2 model
+RF_wflow2 <- workflows::workflow() |>
+  workflows::add_recipe(RF_rec2) |>
+  workflows::add_model(RF_PM_model2)
+
+# fit workflow to data
+RF_wflow_fit2 <- parsnip::fit(RF_wflow2, data = train_pm2)
+```
+
+Following the same steps as before, we performed a cross-validation (4-fold) on the training data to evaluate the random forest model's performance using fit_resamples. The code we wrote then sets up and fits a random forest regression model, applying feature engineering steps like creating dummy variables and handling correlations and near-zero variance predictors, and finally visualizes the most important features from the fitted random forest model using the vip package. The set.seed(123) ensures reproducibility of the random sampling.
+
+
+```{r}
+# cross-validation on RF_wflow2 using vfold_pm2 + collect performance metrics
+set.seed(123)
+resample_RF_fit2 <- tune::fit_resamples(RF_wflow2, vfold_pm2)
+collect_metrics(resample_RF_fit2)
+```
+
+As we see, the R^2 for the training data sample averages out to 0.945, indicating that 94.5% of the variability in area-based crime frequencies are explained by the model that excludes race factors. This is 0.5% lower than the overall model; this provides a preliminary outlook that descent of the victim does play an important role in a model determining the level of crime in an area. For comparison reasons, it is also important to state that the training RMSE is 0.615 log-transformed crime count; this is 0.018 higher than the RMSE when training the overall model. Let's examine if the same trend is evident with the testing data after hyperparameter tuning.
+
+```{r}
+# define random forest regression model with tunable mtry and min_n
+set.seed(123)
+tune_RF_model2 <- rand_forest(mtry = tune(), min_n = tune()) |>
+  set_engine("randomForest") |>
+  set_mode("regression")
+
+# create workflow with tunable random forest model and preprocessing recipe
+RF_tune_wflow2 <- workflows::workflow() |>
+  workflows::add_recipe(RF_rec2) |>
+  workflows::add_model(tune_RF_model2)
+
+n_cores <- parallel::detectCores()
+
+registerDoRNG(123)
+
+doParallel::registerDoParallel(cores = n_cores)
+
+# random forest model tuned w/ grid search 
+tune_RF_results2 <- tune_grid(object = RF_tune_wflow2, resamples = vfold_pm2, grid = 20)
+
+# select best model based on lowest RMSE
+tuned_RF_values2 <- select_best(tune_RF_results2, metric = "rmse")
+
+# finalize workflow w/ best-tuned parameters from tuned_RF_values2
+RF_tuned_wflow2 <-RF_tune_wflow2 |>
+  tune::finalize_workflow(tuned_RF_values2)
+
+# fit model with those parameters on train AND test
+overallfit2 <- RF_wflow2 |>
+  tune::last_fit(pm2_split)
+
+test_predictions2 <- collect_metrics(overallfit2)
+test_predictions2
+```
+
+Similar to before, the code above defines a hyperparameter tuning process for our random forest model (tune_RF_model) by tuning the mtry and min_n hyperparameters using tune(), then set up a workflow to include the recipe and model. After executing, the R^2 value decreasing to 0.912 indicates that 91.2% of the variability in crime frequency levels can be explained by the model. On top of this, the RMSE increased by 0.008 log-transformed crime count to 0.623 log-transformed crime count.
+
+Compared to the post-hyperparameter tuning results of the overall model, this model has a 0.6% lower R^2 and 0.017 log-transformed crime level higher RMSE--when utilizing the entire dataset. These results further point to the fact that the descent of victims does impact the rate of crime in an area. Let's evaluate the extent by comparing model accuracies.
+
+
+```{r}
+# compare predicted values with target values in test_pm2
+compare2 <- test_pm2 |>
+  mutate(.pred = collect_predictions(overallfit2)$.pred) |>
+  select(.pred, target)
+
+# calculate proportion of predictions with less than 10% error
+sum(abs(compare2$target - compare2$.pred) / compare2$target < .1) / nrow(compare2)
+```
+
+Using the same accuracy metric, the model excluding the victim's descent only achieved an accuracy of 74.5%. This is 1% lower than the overall model. This result, combined with the observations of R-squared and RMSE for both models, indicates that this model did a worse job at understanding the relations in the data and generalizing than the overall model. In addition, we can conclude that the **1% decrease in overall accuracy between the model excluding the victim's descent versus the model that includes them is due to the lack of including these variables**. Therefore, demographic factors included in the dataset did play a noticeable role in determining grid-level crime counts. 
+
+Let's see if the hot spots are the same for this model.
+
+```{r}
+# add predictions and select relevant columns
+test_guesses2 <- test_pm2 |>
+  mutate(.pred = collect_predictions(overallfit2)$.pred) |>
+  select(.pred, target, lat_group, lon_group)
+
+# generate predictions on train_m2 using trained workflow
+trained_workflow2 <- extract_workflow(overallfit2)
+train_guesses2 <- train_pm2 |>
+  mutate(.pred = predict(trained_workflow2, new_data = train_pm2)$.pred) |>
+  select(.pred, target, lat_group, lon_group)
+
+# combine test_guesses2 and train_guesses2 into one dataset
+all_guess_and_actual2 <- bind_rows(test_guesses2, train_guesses2)
+
+# merge squares with all_guess_and_actual2 by lat_group and lon_group
+squares_all2 <- merge(squares, all_guess_and_actual2, by = c("lat_group", "lon_group"), all.x = TRUE)
+
+# calculate absolute difference between predictions and actual values in squares_all
+squares_all2$diff <- abs(squares_all2$.pred - squares_all2$target)
+  
+# map of squares_all2 data colored by actual target values, overlaid on world map
+ggplot() +
+  geom_sf(data = world, fill = "gray95", color = "gray45") +
+  geom_sf(data = squares_all2, aes(fill = target), alpha = 0.7, color = "black") +
+  scale_fill_gradient2(
+    low = "white", mid = "yellow", high = "red",  
+    limits = c(0, max(squares_all2$target)),
+    midpoint =4.5,
+    oob = scales::squish
+  ) +
+  theme_minimal() +
+  coord_sf(xlim = c(-118.8, -118.1), ylim = c(33.6, 34.4), expand = FALSE) +
+  theme() + 
+  labs(
+    title = "True Grid-Level, Log-Transformed Crime Counts",
+    x = "Longitude",
+    y = "Latitude",
+    fill = "Log(Crime Count)"
+  )
+
+# map of squares_all2 data colored by predicted values, overlaid on world map
+ggplot() +
+  geom_sf(data = world, fill = "gray95", color = "gray45") +
+  geom_sf(data = squares_all2, aes(fill = .pred), alpha = 0.9, color = "black") +
+  scale_fill_gradient2(
+    low = "white", mid = "yellow", high = "red",  
+    limits = c(0, max(squares_all2$target)),
+    oob = scales::squish,
+    midpoint = 4.5
+  ) +
+  theme_minimal() +
+  coord_sf(xlim = c(-118.8, -118.1), ylim = c(33.6, 34.4), expand = FALSE) +
+  theme() + 
+  labs(
+    title = "Predicted Grid-Level, Log-Transformed Crime Counts",
+    x = "Longitude",
+    y = "Latitude",
+    fill = "Log(Crime Count)"
+  )
+```
+
+Plotted are the true log-transformed crime counts per polygon and the predicted log-transformed crime counts--using the training and testing data. Again, the color gradient starts with white at 0, then goes to a yellow, and then red as the log-transformed crime count increases. 
+
+Like before, both maps seem to be displaying 1 main hotspot and 2 less noticeable, but still present, hotspots. The main hotspot is in downtown LA centered at (34.05, -118.25), like the overall model; this is next to Skid Row, which is known to be a rough part of Los Angeles. The other two hot spots--wide spread but less extreme one centered at (34.2, -118.45) and a more isolated, less extreme one located at (33.75, -118.275)--are the same as the overall model. Extremeness is determined by the color, where red is extreme and dark orange is less extreme.
+
+
+## Results & Discussion 
+
+Our analysis of crime patterns in Los Angeles revealed significant spatial and demographic trends. Spatially, three major crime hotspots emerged: downtown Los Angeles around (34.05, -118.275), northern Los Angeles County at (34.25, -118.45), and a smaller cluster in southern Los Angeles County at (33.725, -118.275). Downtown Los Angeles exhibited the highest crime density, consistent with its urban density and socio-economic challenges. These hotspots align with neighborhoods marked by poverty, under-resourced schools, and limited access to social services, factors that create conditions conducive to crime. Despite concentrated policing resources in Central LA, the persistently high crime rate suggests that traditional law enforcement approaches alone are insufficient, underscoring the need for more holistic interventions that incorporate community engagement and systemic reform. Geospatial patterns that we observed in our analyses also revealed administrative and environmental influences. High-crime areas may partly reflect reporting biases, as these regions serve as administrative hubs for law enforcement. Additionally, temporal analysis indicated predictable spikes during weekends and nighttime hours, aligning theories of routine activities, which links increased social interaction during these periods to heightened opportunities for crime.
+
+Demographic observations and analysis further highlighted disparities in victim representation. Adults aged 35-45 were most commonly represented among crime victims, a finding that differed from literature that linked younger age groups (18-29) to greater social exposure and elevated risk factors. Victimization gradually declined among those over 45, likely reflecting lifestyle differences and reduced exposure to crime-prone environments. Gender-specific patterns were also evident, with men more often victims of violent crimes such as assault, while women were disproportionately affected by domestic and interpersonal violence. These findings underscore the need for targeted, gender-sensitive interventions that address distinct vulnerabilities. Ethnicity also played a critical role in victimization patterns. Black individuals experienced disproportionately higher rates of violent crimes, which can be attributed to systemic inequities, including economic disadvantages and strained relationships with law enforcement. Although Latinx individuals were underrepresented in the overall dataset compared to their demographic share in Los Angeles, this discrepancy may reflect underreporting in communities with historically low trust in law enforcement. The importance the descent of victims played in the overall model's creation sheds light onto how systemic law enforcement factors and demographic characteristics influence crime dynamics and shape predictive modeling approaches. These findings reinforce the need to address structural factors that place minority communities at greater risk and to develop interventions that consider the specific needs of different populations.
+
+The random forest model used in this study demonstrated strong predictive capabilities, explaining 91.8% of the variance in crime frequency (R² = 0.918) and achieving an RMSE of 0.605 after hyperparameter tuning. The model demonstrated an accuracy of 75.5% for predictions within 10% of actual values, with spatial variables and crime-specific details serving as the most critical predictors. Demographic attributes played a secondary role, highlighting the importance of location and environmental factors in understanding crime dynamics. The model does have some limitations. While the formation of the grid is deterministic, the addition of new data points could shift grid-lines, which could possibly impact the results of the models. Further testing with different grid-lines--adjusting both position and size, within reason--should be conducted to bolster (or disprove) our models' conclusions. In addition, the biased nature of policing most likely skewed the data we had access to, highlighting the need to exercise caution when discussing the results of this exploration. While the models' results underscore the model's potential for resource optimization and predictive policing, caution is necessary to ensure that predictive models do not perpetuate biases embedded in historical data. 
+
+## Conclusion
+
+This study explored the intersection of demographic, spatial, and temporal factors in understanding crime patterns in Los Angeles. Our findings revealed significant disparities in victim demographics, specifically ethnicity, highlighting systemic inequities that disproportionately affect minority and vulnerable populations. Spatial analysis identified three major crime hotspots, underscoring the influence of environmental and socio-economic conditions on crime distribution. Temporal trends further emphasized the importance of macro-level influences and routine activities in shaping crime dynamics. These findings emphasize the multifaceted nature of crime and the importance of intersectional analysis. Spatial clustering highlights the need for targeted interventions in high-risk neighborhoods, while demographic disparities underscore systemic inequalities that extend beyond individual victimization. The predictive modeling approach, utilizing a random forest algorithm, achieved high accuracy, demonstrating its potential as a tool for resource allocation and proactive crime prevention. However, the study also illuminated limitations in the data, including biases in reporting and missing values, which underscore the need for more robust and inclusive data collection practices.
+
+Additional limitations included potential underreporting and administrative biases in the data, which may influence the findings. Additionally, we did not have any information in our dataset regarding income levels in different areas of the Los Angeles County, which may have been something useful to look into, since many studies have previously implied that poverty rates may affect crime rates. Overall, while our dataset included a good amount of information and was extensive, there were a couple of other avenues that we could potentially explore in the future with the inclusion of new variables. This would potentially help strengthen our analyses by taking more variables into account that have been shown to influence crime rates previously. 
+
+Generally, this study emphasizes the complexity of crime as a multifaceted issue influenced by intersecting factors of demographics, geography, and systemic inequalities. To create meaningful change, future efforts must prioritize evidence-based, equity-focused strategies that address both the root causes of crime and the systemic barriers faced by affected communities.  Addressing these challenges in future research through improved data collection and integration of qualitative insights could further enhance our understanding of crime patterns and inform more equitable policy interventions in general, which would thus help maximize safety for residents. By refining our models and expanding the scope of analysis, we can better identify the root causes of crime and develop solutions that foster safer, more resilient communities. In other words, influencing the design of potential interventions that promote safety and justice for all residents of Los Angeles and counties with similar geographic and demographic characteristics.
+
+
+**References**
+
+Barry, N. G. P. a. C. (2024, January 16). One in five: disparities in crime and policing. The Sentencing Project. https://www.sentencingproject.org/reports/one-in-five-disparities-in-crime-and-policing/.
+
+Braithwaite, J. (1975). Population growth and crime. Australian & New Zealand Journal of Criminology, 8(1), 57–60. https://doi.org/10.1177/000486587500800107.
+
+California counties by population (2024). https://worldpopulationreview.com/us-counties/california. 
+
+Californians for Safety and Justice (2017). Findings from the First-Ever Survey of California Crime Victims and Survivors. https://safeandjust.org/wp-content/uploads/CA-Crime-Victims-Report-8_24_17.pdf.
+
+Li, Weihua, and Jamiles Lartey. “The Problem with the FBI’s Missing Crime Data.” The Marshall Project, The Marshall Project, 8 Oct. 2022, www.themarshallproject.org/2022/10/08/the-problem-with-the-fbi-s-missing-crime-data. 
+
+Los Angeles County, California Population (2024). https://worldpopulationreview.com/us-counties/california/los-angeles-county .
+
+Los Angeles County – Diversity | Clinical and Translational Science Institute. (2024, June 18). Clinical and Translational Science Institute. https://ctsi.ucla.edu/los-angeles-county-diversity.
+
+Turner, M. A., & Greene, S. (2022, March 15). Causes and consequences of separate and unequal neighborhoods. Urban Institute. https://www.urban.org/racial-equity-analytics-lab/structural-racism-explainer-collection/causes-and-consequences-separate-and-unequal-neighborhoods#:~:text=High%20levels%20of%20crime%20and%20violence%20also%20have%20dire%20consequences,of%20social%20and%20economic%20life. 
+
+Why crimes occur in hot spots | National Institute of Justice. (n.d.). National Institute of Justice. https://nij.ojp.gov/topics/articles/why-crimes-occur-hot-spots.
+
